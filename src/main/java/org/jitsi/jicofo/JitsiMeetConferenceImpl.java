@@ -3113,6 +3113,27 @@ public class JitsiMeetConferenceImpl
         return includeInStatistics;
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public List<JibriSession> getJibriSessions()
+    {
+        List<JibriSession> sessions = new ArrayList<>();
+
+        if (jibriRecorder != null)
+        {
+            sessions.addAll(jibriRecorder.getJibriSessions());
+        }
+
+        if  (jibriSipGateway != null)
+        {
+            sessions.addAll(jibriSipGateway.getJibriSessions());
+        }
+
+        return sessions;
+    }
+
     protected FocusManager getFocusManager()
     {
         return ServiceUtils.getService(FocusBundleActivator.bundleContext, FocusManager.class);

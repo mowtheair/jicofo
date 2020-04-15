@@ -17,10 +17,14 @@
 package org.jitsi.jicofo.recording.jibri;
 
 import org.jitsi.eventadmin.*;
+import org.jitsi.jicofo.*;
 import org.jitsi.osgi.*;
 import org.jitsi.utils.logging.*;
 import org.json.simple.*;
 import org.osgi.framework.*;
+
+import java.util.*;
+import java.util.function.*;
 
 /**
  * Service listens for {@link JibriSession} events and computes statistics.
@@ -32,6 +36,11 @@ public class JibriStats
      * The class logger used by {@link JibriStats}.
      */
     static private final Logger logger = Logger.getLogger(JibriStats.class);
+
+    /**
+     * The OSGi bundle context.
+     */
+    private BundleContext bundleContext;
 
     /**
      * How many times a Jibri SIP call has failed to start.
@@ -57,6 +66,59 @@ public class JibriStats
     }
 
     /**
+     * Counts active {@link JibriSession}s.
+     * @param sessions the list of sessions.
+     * @param jibriType the type of Jibri to count.
+     * @return how many active Jibri sessions of given type are in the list.
+     */
+    private int countActive(List<JibriSession> sessions,
+                            JibriSessionEvent.Type jibriType)
+    {
+        return countJibris(sessions, jibriType, JibriSession::isActive);
+    }
+
+    /**
+     * Counts Jibri sessions.
+     * @param sessions the list of sessions to scan.
+     * @param jibriType the type of jibri session to be count.
+     * @param selector the selector which makes the decision on whether or not
+     * to count the given instance.
+     * @return the count of Jibri sessions of given type that pass
+     * the selector's test.
+     */
+    private int countJibris(
+            List<JibriSession> sessions,
+            JibriSessionEvent.Type jibriType,
+            Function<JibriSession, Boolean> selector)
+    {
+        int count = 0;
+
+        for (JibriSession session : sessions)
+        {
+            if (session.getJibriType().equals(jibriType)
+                    && selector.apply(session))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Counts pending Jibri sessions of given type.
+     * @param sessions the list of sessions to scan.
+     * @param jibriType the type of Jibri session to count.
+     * @return how many Jibri sessions of given type and in the pending state
+     * are there on the list.
+     */
+    private int countPending(List<JibriSession> sessions,
+                             JibriSessionEvent.Type jibriType)
+    {
+        return countJibris(sessions, jibriType, JibriSession::isPending);
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override
@@ -65,7 +127,73 @@ public class JibriStats
     {
         super.start(bundleContext);
 
+        this.bundleContext = bundleContext;
+
         bundleContext.registerService(JibriStats.class, this, null);
+    }
+
+    /**
+     * Generates the stats section covering Jibri sessions.
+     * @param stats the JSON object to which the stats are added to.
+     */
+    private void generateJibriSessionStats(JSONObject stats)
+    {
+        if (this.bundleContext == null)
+        {
+            return;
+        }
+
+        FocusManager focusManager
+                = ServiceUtils2.getService(this.bundleContext, FocusManager.class);
+
+        if (focusManager == null)
+        {
+            return;
+        }
+
+        List<JitsiMeetConference> conferences = focusManager.getConferences();
+
+        for (JitsiMeetConference conf : conferences)
+        {
+            if (!conf.includeInStatistics())
+            {
+                continue;
+            }
+
+            List<JibriSession> sessions = conf.getJibriSessions();
+
+            stats.put(
+                    "live_streaming_active",
+                    countActive(
+                            sessions,
+                            JibriSessionEvent.Type.LIVE_STREAMING));
+            stats.put(
+                    "recording_active",
+                    countActive(
+                            sessions,
+                            JibriSessionEvent.Type.RECORDING));
+            stats.put(
+                    "sip_call_active",
+                    countActive(
+                            sessions,
+                            JibriSessionEvent.Type.SIP_CALL));
+
+            stats.put(
+                    "live_streaming_pending",
+                    countPending(
+                            sessions,
+                            JibriSessionEvent.Type.LIVE_STREAMING));
+            stats.put(
+                    "recording_pending",
+                    countPending(
+                            sessions,
+                            JibriSessionEvent.Type.RECORDING));
+            stats.put(
+                    "sip_call_pending",
+                    countPending(
+                            sessions,
+                            JibriSessionEvent.Type.SIP_CALL));
+        }
     }
 
     /**
@@ -138,6 +266,8 @@ public class JibriStats
         stats.put("total_live_streaming_failures", getTotalLiveStreamingFailures());
         stats.put("total_recording_failures", getTotalRecordingFailures());
         stats.put("total_sip_call_failures", getTotalSipCallFailures());
+
+        generateJibriSessionStats(stats);
 
         return stats;
     }
